@@ -36,7 +36,7 @@
 #include "TScaler.h"
 #include "TFragmentMap.h"
 #include "ThreadsafeQueue.h"
-#include "TEpicsFrag.h"
+#include "TScalerFrag.h"
 #include "TGRSIOptions.h"
 #include "TRawEvent.h"
 #include "TMidasEvent.h"
@@ -92,6 +92,7 @@ public:
 
    int EPIXToScalar(float* data, int size, unsigned int midasSerialNumber = 0, time_t midasTime = 0);
    int SCLRToScalar(uint32_t* data, int size, unsigned int midasSerialNumber = 0, time_t midasTime = 0);
+   int RFToScalar(uint32_t* data, int size, unsigned int midasSerialNumber = 0, time_t midasTime = 0);
    int EightPIDataToFragment(uint32_t stream, uint32_t* data, int size, unsigned int midasSerialNumber = 0,
                              time_t midasTime = 0);
 

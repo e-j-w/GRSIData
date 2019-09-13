@@ -6,7 +6,7 @@
 
 #include "TScalerQueue.h"
 
-#include "TEpicsFrag.h"
+#include "TScalerFrag.h"
 #include "TParsingDiagnostics.h"
 
 #include "Rtypes.h"
@@ -535,8 +535,17 @@ int TGRSIDataParser::GriffinDataToFragment(uint32_t* data, int size, EBank bank,
    if((eventFrag->GetModuleType() == 1 || eventFrag->GetModuleType() == 4) && eventFrag->GetAddress() == 0xffff) {
       return GriffinDataToPPGEvent(data, size, midasSerialNumber, midasTime);
    }
+   
    // If the event has detector type 15 (0xf) it's a scaler event.
    if(eventFrag->GetDetectorType() == 0xf) {
+
+      //handle RF scaler events
+      TChannel* chan = TChannel::GetChannel(eventFrag->GetAddress());
+      if((chan != nullptr) && strncmp("RF", chan->GetName(), 2) == 0) {
+         //printf("RF event: %s with timestamp: %li\n",chan->GetName(),eventFrag->GetDaqTimeStamp());
+         return RFToScalar(data, size, midasSerialNumber, midasTime);
+      }
+
       // a scaler event (trigger or deadtime) has 8 words (including header and trailer), make sure we have at least
       // that much left
       if(size < 8) {
@@ -548,7 +557,9 @@ int TGRSIDataParser::GriffinDataToFragment(uint32_t* data, int size, EBank bank,
          }
          throw TGRSIDataParserException(fState, failedWord, multipleErrors);
       }
+
       return GriffinDataToScalerEvent(data, eventFrag->GetAddress());
+
    }
 
    // The Network packet number is for debugging and is not always written to the midas file.
@@ -614,7 +625,7 @@ int TGRSIDataParser::GriffinDataToFragment(uint32_t* data, int size, EBank bank,
       uint32_t dword  = data[x];
       uint32_t packet = dword >> 28;
       uint32_t value  = dword & 0x0fffffff;
-
+      if((data[x]>>28)==0xa && (data[x-1]>>28)== 0xb)packet = 0xc;
       switch(packet) {
       case 0x8: // The 8 packet type is for event headers
          // if this happens, we have "accidentally" found another event.
@@ -1324,7 +1335,7 @@ int TGRSIDataParser::GriffinDataToScalerEvent(uint32_t* data, int address)
    auto* scalerEvent = new TScalerData;
    scalerEvent->SetAddress(address);
    int x          = 1; // We have already read the header so we can skip the 0th word.
-   int failedWord = -1;
+   int failedWord = -1;  
 
    // we expect a word starting with 0xd containing the network packet id
    // this is a different format than the others because it will not always be in the scaler word
@@ -1339,6 +1350,7 @@ int TGRSIDataParser::GriffinDataToScalerEvent(uint32_t* data, int address)
       failedWord = x;
       throw TGRSIDataParserException(fState, failedWord, false);
    }
+
    // followed by four scaler words (32 bits each)
    for(int i = 0; i < 4; ++i) {
       if(!SetScalerValue(i, data[x++], scalerEvent)) {
@@ -1348,6 +1360,7 @@ int TGRSIDataParser::GriffinDataToScalerEvent(uint32_t* data, int address)
          throw TGRSIDataParserException(fState, failedWord, false);
       }
    }
+
    // and finally the trailer word with the highest 24 bits of the timestamp
    int scalerType = 0;
    if(!SetScalerHighTimeStamp(data[x++], scalerEvent, scalerType)) {
@@ -1617,17 +1630,54 @@ int TGRSIDataParser::CaenToFragment(uint32_t* data, int size, std::shared_ptr<TM
 int TGRSIDataParser::EPIXToScalar(float* data, int size, unsigned int midasSerialNumber, time_t midasTime)
 {
 	int                         NumFragsFound = 1;
-	std::shared_ptr<TEpicsFrag> EXfrag        = std::make_shared<TEpicsFrag>();
+	std::shared_ptr<TScalerFrag> EXfrag        = std::make_shared<TScalerFrag>();
 
 	EXfrag->fDaqTimeStamp = midasTime;
 	EXfrag->fDaqId        = midasSerialNumber;
 
 	for(int x = 0; x < size; x++) {
 		EXfrag->fData.push_back(data[x]);
-		EXfrag->fName.push_back(TEpicsFrag::GetEpicsVariableName(x));
+		EXfrag->fName.push_back(TScalerFrag::GetEpicsVariableName(x));
+      //std::cout << "Variable name: " << TScalerFrag::GetEpicsVariableName(x) << std::endl;
 	}
 
 	fScalerOutputQueue->Push(EXfrag);
+	return NumFragsFound;
+}
+
+int TGRSIDataParser::RFToScalar(uint32_t* data, int size, unsigned int midasSerialNumber, time_t midasTime)
+{
+	int                         NumFragsFound = 1;
+   char                        RFName[12];
+	std::shared_ptr<TScalerFrag> RFfrag        = std::make_shared<TScalerFrag>();
+
+	RFfrag->fDaqTimeStamp = midasTime;
+	RFfrag->fDaqId        = midasSerialNumber;
+
+   int x=0;
+   for(int i = 0; i < size; i++) {
+      if(data[x]==0){
+         x+=4;
+         break;
+      }else{
+         x++;
+      }
+	}
+
+	for(int i = 0; i < 4; i++) {
+      if(x<size){
+         sprintf(RFName,"RF par %i",i+1);
+         RFfrag->fData.push_back(data[x]);
+         RFfrag->fName.push_back(RFName);
+         x++;
+      }
+      
+	}
+
+   //printf("\n");
+   //getc(stdin);
+
+	fScalerOutputQueue->Push(RFfrag);
 	return NumFragsFound;
 }
 
@@ -1672,7 +1722,7 @@ int TGRSIDataParser::EmmaMadcDataToFragment(uint32_t* data, int size, std::share
 				{
 					if((dword & 0x00800000) != 0) {
 						adchightimestamp=dword&0x0000ffff;
-						eventFrag->AppendTimeStamp((static_cast<Long64_t>(adchightimestamp))*static_cast<Long64_t>(0x0000000140000000) ); // 14 gives you the *5 you need
+						eventFrag->AppendTimeStamp((static_cast<Long64_t>(adchightimestamp))*static_cast<Long64_t>(0x0000000040000000)); // This should shift the time stamp 30 bits
 						xferhfts = eventFrag->GetTimeStamp();
 					} else if ((dword & 0x04000000) != 0) { // GH verify that this is a good ADC reading
 						adcchannel = (dword>>16)&0x1F; // ADC Channel Number
@@ -1695,18 +1745,17 @@ int TGRSIDataParser::EmmaMadcDataToFragment(uint32_t* data, int size, std::share
 				eventFrag = nullptr;
 				return numFragsFound;
 				break;
-
 			case 0xe:
 			case 0xf:
 			case 0xd:
 			case 0xc: // Last 30 bits of timestamp
 				adctimestamp =(dword&0x3FFFFFFF);
-				eventFrag->AppendTimeStamp( static_cast<Long64_t>(adctimestamp)*static_cast<Long64_t>(5) ) ;
+				eventFrag->AppendTimeStamp( static_cast<Long64_t>(adctimestamp) ) ;
+//				eventFrag->AppendTimeStamp( static_cast<Long64_t>(adctimestamp)*static_cast<Long64_t>(5) ) ;
 				break;
 			default: break;
 		} // end swich
 	} // end for read backwards
-
 	return numFragsFound;
 }
 
@@ -1801,7 +1850,7 @@ int TGRSIDataParser::EmmaTdcDataToFragment(uint32_t* data, int size, std::shared
 				lasttimestamp=tmpTimestamp; // so far so good
 				ts = static_cast<Long64_t>(lasttimestamp); // start with 32 bits
 				ts += static_cast<Long64_t>(0x100000000)*static_cast<Long64_t>(wraparoundcounter); // add wrap around
-				ts = ts * static_cast<Long64_t>(5); // multiply by 5
+				//ts = ts * static_cast<Long64_t>(5); // multiply by 5
 				ts = ts >> 1; // divide by 2
 				// And now that we've actually done all this:
 				// Check if there's a somewhat valid timestamp from an ADC
@@ -1862,4 +1911,3 @@ int TGRSIDataParser::EmmaTdcDataToFragment(uint32_t* data, int size, std::shared
 	}
 	return numFragsFound;
 }
-
