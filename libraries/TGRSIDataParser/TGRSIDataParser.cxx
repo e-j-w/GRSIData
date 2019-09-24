@@ -78,8 +78,8 @@ int TGRSIDataParser::Process(std::shared_ptr<TRawEvent> rawEvent)
 		case 5:
 			event->SetBankList();
 			if((banksize = event->LocateBank(nullptr, "MSRD", &ptr)) > 0) {
-				EPIXToScalar(reinterpret_cast<float*>(ptr), banksize, event->GetSerialNumber(), event->GetTimeStamp());
-				// EPIXToScalar will only ever read a single fragment
+				EPIXToScaler(reinterpret_cast<float*>(ptr), banksize, event->GetSerialNumber(), event->GetTimeStamp());
+				// EPIXToScaler will only ever read a single fragment
 				event->IncrementGoodFrags();
 			}
 			break;
@@ -543,7 +543,7 @@ int TGRSIDataParser::GriffinDataToFragment(uint32_t* data, int size, EBank bank,
 		TChannel* chan = TChannel::GetChannel(eventFrag->GetAddress());
 		if((chan != nullptr) && strncmp("RF", chan->GetName(), 2) == 0) {
 			//printf("RF event: %s with timestamp: %li\n",chan->GetName(),eventFrag->GetDaqTimeStamp());
-			return RFToScalar(data, size, midasSerialNumber, midasTime);
+			return RFToScaler(data, size, midasSerialNumber, midasTime);
 		}
 
 		// a scaler event (trigger or deadtime) has 8 words (including header and trailer), make sure we have at least
@@ -1816,7 +1816,7 @@ int TGRSIDataParser::CaenPhaToFragment(uint32_t* data, int size, std::shared_ptr
 /////////////***************************************************************/////////////
 /////////////***************************************************************/////////////
 
-int TGRSIDataParser::EPIXToScalar(float* data, int size, unsigned int midasSerialNumber, time_t midasTime)
+int TGRSIDataParser::EPIXToScaler(float* data, int size, unsigned int midasSerialNumber, time_t midasTime)
 {
 	int                         NumFragsFound = 1;
 	std::shared_ptr<TScalerFrag> EXfrag        = std::make_shared<TScalerFrag>();
@@ -1834,37 +1834,110 @@ int TGRSIDataParser::EPIXToScalar(float* data, int size, unsigned int midasSeria
 	return NumFragsFound;
 }
 
-int TGRSIDataParser::RFToScalar(uint32_t* data, int size, unsigned int midasSerialNumber, time_t midasTime)
+int TGRSIDataParser::RFToScaler(uint32_t* data, int size, unsigned int midasSerialNumber, time_t midasTime)
 {
 	int                         NumFragsFound = 1;
-   char                        RFName[12];
+	char                        RFName[12];
 	std::shared_ptr<TScalerFrag> RFfrag        = std::make_shared<TScalerFrag>();
+	ULong64_t                    ts,tshigh;
+	bool                         freqSet=false;
+	bool                         tsSet=false;
 
 	RFfrag->fDaqTimeStamp = midasTime;
 	RFfrag->fDaqId        = midasSerialNumber;
 
-   int x=0;
-   for(int i = 0; i < size; i++) {
-      if(data[x]==0){
-         x+=4;
-         break;
-      }else{
-         x++;
-      }
+  	/* printf("[");
+	for(int i = 0; i < 11; i++){
+		printf(" %i: 0x%x ",i,data[i]);
+	}
+	printf("]\n"); */
+	//getc(stdin);
+	
+	int x=0;
+	for(int i = 0; i < size; i++) {
+		ts=0;
+		if(x >= size){
+			//printf("RF fragment missing frequency and/or timestamp info!\n");
+			return -1;
+		}else if((data[x] >> 28) == 0x9){
+			if(x<size){
+				RFfrag->fData.push_back(static_cast<double>(data[x] & 0x0fffffff)); //RF frequency (27-bit number) in cycles per 2^27 clock ticks or 1.34s
+				RFfrag->fName.push_back("RF Frequency");
+				freqSet=true;
+				//printf("freq: 0x%x 0x%x %i\n",data[x],data[x] & 0x00ffffff,data[x] & 0x00ffffff);
+			}
+		}else if((data[x] >> 28) == 0xa){
+			ts |= (data[x] & 0x0fffffff);
+			x++;
+			if((data[x] >> 28) == 0xb) {
+				tshigh = data[x]; //need to convert the high timestamp data to a long int prior to shifting
+				ts |= ((tshigh & 0x00003fff)<<28);
+				RFfrag->SetTimeStamp(ts*10); //x10 to convert to ns
+				tsSet=true;
+			}else{
+				//printf("Invalid RF high time stamp!\n");
+				return -1;
+			}
+		}else if((data[x] >> 28) == 0xe){
+			printf("Early end to RF fragment.\n");
+			return -1;
+		}
+		x++;
+		if(freqSet&&tsSet)
+			break;
 	}
 
+	if(!(x<size-3)){
+		printf("RF fragment does not contain all parameters.\n");
+		return -1;
+	}
+
+	if((data[x]==data[x+1])&&(data[x]==data[x+2])&&(data[x]==data[x+3])){
+		printf("Failed RF fit: all parameters are the same value.\n");
+		return -1;
+	}
+
+	int pos=0;
 	for(int i = 0; i < 4; i++) {
-      if(x<size){
-         sprintf(RFName,"RF par %i",i+1);
-         RFfrag->fData.push_back(data[x]);
-         RFfrag->fName.push_back(RFName);
-         x++;
-      }
-      
-	}
+		if(x<size){
+			if((data[x] >> 28) == 0xe){
+				printf("RF fragment unexpectedly ended early!\n");
+				return -1;
+			}
+			if((i!=2)&&(data[x] == 0)){
+				printf("Failed RF fit: non-offset parameter is zero.\n");
+				return -1;
+			}
 
-   //printf("\n");
-   //getc(stdin);
+			if(i<3)
+				sprintf(RFName,"RF par %i",i);
+			else
+				sprintf(RFName,"RF Determinant");
+			
+			if(data[x] & (1<<29)){ 
+				//parameter value is negative
+				//take two's complement
+				for(int j=0;j<30;j++){
+					if(data[x] & (1<<j)){
+						pos=j;
+						break;
+					}
+				}
+				for(int j=pos+1;j<30;j++){
+					data[x] ^= 1 << j;
+				}
+				RFfrag->fData.push_back(static_cast<double>(-1.0*(data[x] & 0x03ffffff))); //RF fit parameters (30-bit numbers)
+				//printf("par %i: %f\n",i,-1.0*(data[x] & 0x03ffffff));
+			}else{
+				RFfrag->fData.push_back(static_cast<double>(data[x] & 0x03ffffff)); //RF fit parameters (30-bit numbers)
+				//printf("par %i: %f\n",i,1.0*(data[x] & 0x03ffffff));
+			}
+				
+			
+			RFfrag->fName.push_back(RFName);
+			x++;
+		}
+	}
 
 	fScalerOutputQueue->Push(RFfrag);
 	return NumFragsFound;

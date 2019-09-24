@@ -736,7 +736,7 @@ void TMidasFile::SetEPICSOdb()
 #ifdef HAS_XML
    TXMLNode*                node  = fOdb->FindPath("/Equipment/Epics/Settings/Names");
    std::vector<std::string> names = fOdb->ReadStringArray(node);
-   TEpicsFrag::SetEpicsNameList(names);
+   TScalerFrag::SetEpicsNameList(names);
 #endif
 }
 
