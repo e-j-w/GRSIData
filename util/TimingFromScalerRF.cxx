@@ -154,12 +154,12 @@ int BuildRFTimeTable(TTree* stree)
          parHist->Fill(A);
       }
 
-      printf("ts=%llu, phase=%f, T=%f\n",timestampBuffer[i],t0,T);
-      getc(stdin);
+      //printf("ts=%llu, phase=%f, T=%f\n",timestampBuffer[i],t0,T);
+      //getc(stdin);
       
    }
    
-
+   //getc(stdin);
    return RFFragsIn;
 }
 
@@ -243,8 +243,8 @@ void MapPhaseTest(TTree* atree, int numRFFrags, TH1D *interpHist, bool append){
          double e = currentFrag->GetTigressHit(j)->GetEnergy()/1000.0;
          //printf("energy: %f\n",e);
          if(e>0.){
-            ts = currentFrag->GetTigressHit(j)->GetTimeStampNs();
-            //printf("tigress ts: %lu\n",ts);
+            ts = static_cast<ULong64_t>(currentFrag->GetTigressHit(j)->GetTime());
+            printf("tigress ts: %lu\n",ts);
             interpHist->Fill(GetPhaseNsForTimestamp(ts,numRFFrags));
          }
          
@@ -252,20 +252,23 @@ void MapPhaseTest(TTree* atree, int numRFFrags, TH1D *interpHist, bool append){
       }
    }
 
+   getc(stdin);
+
 }
 
-void MapPhase2DTest(TTree* atree, int numRFFrags){
+void MapPhase2DTest(TTree* atree, int numRFFrags, TH2D *hist, bool append){
+   
+   if(!append)
+      hist->Reset();
 
-   TH1D *interpHist = new TH1D("TIGRESS-EMMA timing","TIGRESS-EMMA timing",4000,-10000,10000);
-   interpHist->Reset();
+   ULong64_t ts;
+   //double modts1,modts2;
+   double tigE;
 
-   ULong64_t ts1,ts2;
-   double modts1,modts2;
-
-   TEmma* currentEmmaFrag = nullptr;
+   //TEmma* currentEmmaFrag = nullptr;
    TTigress* currentTigFrag = nullptr;
-   TBranch* branchEmma = atree->GetBranch("TEmma");
-   branchEmma->SetAddress(&currentEmmaFrag);
+   //TBranch* branchEmma = atree->GetBranch("TEmma");
+   //branchEmma->SetAddress(&currentEmmaFrag);
    TBranch* branchTig = atree->GetBranch("TTigress");
    branchTig->SetAddress(&currentTigFrag);
 
@@ -279,26 +282,12 @@ void MapPhase2DTest(TTree* atree, int numRFFrags){
       atree->GetEntry(i);
 
       for(int j=0;j<currentTigFrag->GetMultiplicity();j++){
-         for(int k=0;k<currentEmmaFrag->GetICMultiplicity();k++){
-            ts1 = currentTigFrag->GetTigressHit(j)->GetTimeStampNs();
-            ts2 = currentEmmaFrag->GetICHit(k)->GetTimeStampNs();
-            modts1 = static_cast<double>(ts1) + GetPhaseNsForTimestamp(ts1,numRFFrags);
-            modts2 = static_cast<double>(ts2) + GetPhaseNsForTimestamp(ts2,numRFFrags);
-            //modts1 = fmod(ts1 + GetPhaseNsForTimestamp(ts1,numRFFrags),84.841646);
-            //modts2 = fmod(ts2 + GetPhaseNsForTimestamp(ts2,numRFFrags),84.841646);
-            //printf("filling at: %f %f\n",modts2-modts1,modts2);
-            //printf("diffs: %f %f\n",modts1-ts1,modts2-ts2);
-            //printf("ts1: %lu, ts2: %lu, modts1: %f, modts2: %f, diffts: %f, diffmodts: %f\n",ts1,ts2,modts1,modts2,static_cast<double>(ts2)-static_cast<double>(ts1),modts2-modts1);
-            interpHist->Fill(static_cast<double>(ts2)-static_cast<double>(ts1));
-            //interpHist->Fill(modts2-modts1);
-         }
+         tigE = currentTigFrag->GetTigressHit(j)->GetEnergy()/1000.0;
+         ts = static_cast<ULong64_t>(currentTigFrag->GetTigressHit(j)->GetTimeStampNs());
+         hist->Fill(tigE,GetPhaseNsForTimestamp(ts,numRFFrags));
       }
       
    }
-
-   TCanvas* c1 = new TCanvas("c1","c1",800,600);
-   interpHist->GetXaxis()->SetTitle("t_{emma} - t_{tigress} (ns)");
-   interpHist->Draw();
 
 }
 
@@ -350,8 +339,10 @@ int main(int argc, char** argv)
       return 0;
    }
 
-   TH1D *interpHist = new TH1D("TIGRESS mapped phase shift","TIGRESS mapped phase shift",20000,-101,100);
-   interpHist->Reset();
+   //TH1D *interpHist = new TH1D("TIGRESS mapped phase shift","TIGRESS mapped phase shift",20000,-101,100);
+   //interpHist->Reset();
+   TH2D *hist = new TH2D("TIGRESS energy vs timing wrt RF","TIGRESS energy vs timing wrt RF",4001,0,4000,101,0,100);
+   hist->Reset();
 
    //read in tree list file
    if((list=fopen(argv[1],"r"))==NULL){
@@ -426,8 +417,8 @@ int main(int argc, char** argv)
 
       
 
-      MapPhaseTest(inptree,numFrags,interpHist,true);
-      //MapPhase2DTest(inptree,numFrags);
+      //MapPhaseTest(inptree,numFrags,interpHist,true);
+      MapPhase2DTest(inptree,numFrags,hist,true);
 
    }
    
@@ -437,8 +428,11 @@ int main(int argc, char** argv)
    //parHist->Draw();
    theApp=new TApplication("App", &argc, argv);
    TCanvas* c1 = new TCanvas("c1","c1",800,600);
-   interpHist->GetXaxis()->SetTitle("phase shift (ns)");
-   interpHist->Draw();
+   //interpHist->GetXaxis()->SetTitle("phase shift (ns)");
+   //interpHist->Draw();
+   hist->GetXaxis()->SetTitle("TIGRESS Energy");
+   hist->GetYaxis()->SetTitle("phase shift (ns)");
+   hist->Draw();
    theApp->Run(kTRUE);
    
 
