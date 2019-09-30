@@ -1962,7 +1962,7 @@ int TGRSIDataParser::EmmaMadcDataToFragment(uint32_t* data, int size, std::share
 	std::shared_ptr<TFragment> eventFrag     = std::make_shared<TFragment>();
 	xfermidts = event->GetTimeStamp();// to check against EMMT bank
 	eventFrag->SetDaqTimeStamp(xfermidts);
-	xfermidsn = event->GetSerialNumber(); // to chck againts EMMT bank
+        xfermidsn = event->GetSerialNumber(); // to chck againts EMMT bank
 	eventFrag->SetDaqId(xfermidsn);
 	eventFrag->SetDetectorType(12);
 
@@ -2123,8 +2123,8 @@ int TGRSIDataParser::EmmaTdcDataToFragment(uint32_t* data, int size, std::shared
 					eventFrag->SetTimeStamp(xferhfts);
 				} else {
 					eventFrag->SetTimeStamp(ts);
-					//					printf("Failed xfer: MADC/EMMT midts, midsn, ts %llu / %llu, %llu / %llu, %llu / %llu \n",
-					//						xfermidts,midasTime,xfermidsn,midasSerialNumber,xferhfts,ts);
+//					printf("Failed xfer: MADC/EMMT midts, midsn, ts %llu / %llu, %llu / %llu, %llu / %llu \n",
+//						xfermidts,midasTime,xfermidsn,midasSerialNumber,xferhfts,ts);
 				}
 				// got all the data, so now we can loop over the hits and write them
 				if(addresses.size() != charges.size()) {
@@ -2151,7 +2151,7 @@ int TGRSIDataParser::EmmaTdcDataToFragment(uint32_t* data, int size, std::shared
 					// 	printf("Address %x hit %d times, keep only 1st\n",addresses[i],duped+1);
 					// }
 				}
-
+					
 				// clear the old data
 				addresses.clear();
 				charges.clear();
